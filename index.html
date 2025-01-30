@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkyShare | P2P File Transfer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary: #2563eb;
+            --secondary: #1e40af;
+            --background: #f8fafc;
+            --text: #1e293b;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+
+        body {
+            background: var(--background);
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            background: white;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 1rem 0;
+            margin-bottom: 3rem;
+        }
+
+        .nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .upload-section {
+            background: white;
+            border-radius: 1rem;
+            padding: 3rem;
+            text-align: center;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+            border: 2px dashed #cbd5e1;
+            transition: all 0.3s ease;
+        }
+
+        .upload-section.dragover {
+            border-color: var(--primary);
+            background: #eff6ff;
+        }
+
+        .upload-input {
+            display: none;
+        }
+
+        .upload-label {
+            cursor: pointer;
+            padding: 1rem 2rem;
+            background: var(--primary);
+            color: white;
+            border-radius: 0.5rem;
+            transition: background 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .upload-label:hover {
+            background: var(--secondary);
+        }
+
+        .share-link {
+            margin-top: 1rem;
+            word-break: break-all;
+            padding: 1rem;
+            background: #e2e8f0;
+            border-radius: 0.5rem;
+            display: none;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 1rem;
+        }
+
+        .progress {
+            width: 0%;
+            height: 100%;
+            background: var(--primary);
+            transition: width 0.3s ease;
+        }
+
+        .status {
+            margin-top: 1rem;
+            font-weight: 500;
+        }
+
+        .download-section {
+            display: none;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <nav class="nav container">
+            <div class="logo">SkyShare</div>
+        </nav>
+    </header>
+
+    <main class="container">
+        <section class="upload-section" id="dropZone">
+            <h2>Drag & Drop Files to Share</h2>
+            <p class="text-muted">Peer-to-peer transfer with no file storage</p>
+            <input type="file" id="fileInput" class="upload-input">
+            <label for="fileInput" class="upload-label mt-3">
+                <i class="fas fa-file-upload"></i>
+                Select File
+            </label>
+            <div class="progress-bar">
+                <div class="progress" id="progress"></div>
+            </div>
+            <div class="share-link" id="shareLink"></div>
+            <div class="status" id="status"></div>
+        </section>
+
+        <section class="download-section" id="downloadSection">
+            <h2>Receiving File</h2>
+            <div class="progress-bar">
+                <div class="progress" id="receiveProgress"></div>
+            </div>
+            <div class="status" id="receiveStatus"></div>
+        </section>
+    </main>
+
+    <script>
+        class P2PFileTransfer {
+            constructor() {
+                this.fileInput = document.getElementById('fileInput');
+                this.progress = document.getElementById('progress');
+                this.shareLink = document.getElementById('shareLink');
+                this.status = document.getElementById('status');
+                this.downloadSection = document.getElementById('downloadSection');
+                this.receiveProgress = document.getElementById('receiveProgress');
+                this.receiveStatus = document.getElementById('receiveStatus');
+                
+                this.initEventListeners();
+                this.checkForOffer();
+            }
+
+            initEventListeners() {
+                this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e.target.files[0]));
+                
+                window.addEventListener('dragover', (e) => e.preventDefault());
+                window.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    this.handleFileSelect(e.dataTransfer.files[0]);
+                });
+            }
+
+            async handleFileSelect(file) {
+                if (!file) return;
+
+                this.status.textContent = 'Creating sharing link...';
+                const link = await this.createShareLink(file);
+                this.shareLink.style.display = 'block';
+                this.shareLink.innerHTML = `
+                    Share this link: <a href="${link}" target="_blank">${link}</a>
+                `;
+                this.status.textContent = 'Waiting for receiver...';
+            }
+
+            async createShareLink(file) {
+                const peer = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                const channel = peer.createDataChannel('fileTransfer');
+                let currentProgress = 0;
+
+                channel.onopen = () => {
+                    const reader = new FileReader();
+                    const chunkSize = 16384;
+                    let offset = 0;
+
+                    const sendNextChunk = () => {
+                        const slice = file.slice(offset, offset + chunkSize);
+                        reader.readAsArrayBuffer(slice);
+                    };
+
+                    reader.onload = (e) => {
+                        channel.send(e.target.result);
+                        offset += e.target.result.byteLength;
+                        currentProgress = (offset / file.size) * 100;
+                        this.progress.style.width = `${currentProgress}%`;
+                        
+                        if (offset < file.size) {
+                            sendNextChunk();
+                        } else {
+                            channel.send(JSON.stringify({ done: true }));
+                        }
+                    };
+
+                    sendNextChunk();
+                };
+
+                const offer = await peer.createOffer();
+                await peer.setLocalDescription(offer);
+
+                return `${window.location.href}#${encodeURIComponent(btoa(JSON.stringify(offer)))}`;
+            }
+
+            async checkForOffer() {
+                if (window.location.hash) {
+                    this.downloadSection.style.display = 'block';
+                    const offer = JSON.parse(atob(decodeURIComponent(window.location.hash.substring(1))));
+                    await this.handleReceivedOffer(offer);
+                }
+            }
+
+            async handleReceivedOffer(offer) {
+                const peer = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                let receivedData = [];
+                let fileSize = 0;
+
+                peer.ondatachannel = (e) => {
+                    const channel = e.channel;
+                    
+                    channel.onmessage = (event) => {
+                        if (typeof event.data === 'string') {
+                            const meta = JSON.parse(event.data);
+                            if (meta.done) {
+                                this.saveFile(receivedData);
+                                this.receiveStatus.textContent = 'Download complete!';
+                                return;
+                            }
+                        } else {
+                            receivedData.push(event.data);
+                            fileSize += event.data.byteLength;
+                            this.receiveProgress.style.width = `${(fileSize / meta.size) * 100}%`;
+                        }
+                    };
+                };
+
+                await peer.setRemoteDescription(offer);
+                const answer = await peer.createAnswer();
+                await peer.setLocalDescription(answer);
+
+                window.location.hash = encodeURIComponent(btoa(JSON.stringify(peer.localDescription)));
+            }
+
+            saveFile(chunks) {
+                const blob = new Blob(chunks);
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'received_file';
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+        }
+
+        new P2PFileTransfer();
+    </script>
+</body>
+</html>
